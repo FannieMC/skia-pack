@@ -1,51 +1,60 @@
-on:
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
-  workflow_dispatch:
-    inputs:
-      skip_release:
-        description: 'Skip release related steps? (true/false)'
-        required: true
-        default: 'false'
+#! /usr/bin/env python3
 
-env:
-  version: m122-6726cd3-1
+import common, os, subprocess, sys
 
-jobs:
-  windows:
-    runs-on: windows-2022
-    strategy:
-      matrix:
-        build_type: [Release]
-        machine: ["x64"]
-      fail-fast: false
-    steps:
-      - run: git config --global core.autocrlf input
-      - uses: actions/checkout@v2
-      - shell: bash
-        run: python3 script/check_release.py --version ${{ env.version }} --build-type ${{ matrix.build_type }} --target windows --machine ${{ matrix.machine }}
-        if: ${{ github.event.inputs.skip_release != 'true' && github.ref == 'refs/heads/main' }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - uses: microsoft/setup-msbuild@v1
-      - uses: ilammy/msvc-dev-cmd@v1
-      - shell: bash
-        run: python3 script/checkout.py --version ${{ env.version }}
-      - shell: bash
-        run: python3 script/build.py --build-type ${{ matrix.build_type }} --target windows --machine ${{ matrix.machine }}
-      - shell: bash
-        run: python3 script/archive.py --version ${{ env.version }} --build-type ${{ matrix.build_type }} --target windows --machine ${{ matrix.machine }}
-      - uses: actions/upload-artifact@v2
-        if: ${{ github.event.inputs.skip_release != 'true' && github.ref == 'refs/heads/main' }}
-        with:
-          name: Skia-${{ env.version }}-windows-${{ matrix.build_type }}-${{ matrix.machine }}.zip
-          path: '*.zip'
-      - shell: bash
-        run: python3 script/release.py --version ${{ env.version }} --build-type ${{ matrix.build_type }} --target windows --machine ${{ matrix.machine }}
-        if: ${{ github.event.inputs.skip_release != 'true' && github.ref == 'refs/heads/main' }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+def main():
+  os.chdir(os.path.join(os.path.dirname(__file__), os.pardir, 'skia'))
+
+  build_type = common.build_type()
+  machine = common.machine()
+  host = common.host()
+  host_machine = common.host_machine()
+  target = common.target()
+  ndk = common.ndk()
+
+  tools_dir = "depot_tools"
+  ninja = 'ninja.bat' if 'windows' == host else 'ninja'
+
+  if build_type == 'Debug':
+    args = ['is_debug=true']
+    args = ['is_official_build=false']
+  else:
+    args = ['is_official_build=false']
+    args = ['is_official_build=true']
+
+  args += [
+    'extra_cflags=["/MT"]',
+    #'target_cpu="' + machine + '"',
+    'skia_use_system_expat=false',
+    'skia_use_system_libjpeg_turbo=false',
+    'skia_use_system_libpng=false',
+    'skia_use_system_libwebp=false',
+    'skia_use_system_zlib=false',
+    #'skia_use_sfntly=false',
+    #'skia_use_system_freetype2=false',
+    'skia_use_system_harfbuzz=false',
+    #'skia_pdf_subset_harfbuzz=true',
+    'skia_use_system_icu=false',
+    #'skia_enable_skottie=true',
+    'skia_enable_skparagraph=true',
+    'skia_enable_skshaper=true',
+    'skia_enable_skunicode=true'
+  ]
+
+  if 'windows' == target:
+    args += [
+      #'skia_use_direct3d=true',
+      #'extra_cflags=["-DSK_FONT_HOST_USE_SYSTEM_SETTINGS"]',
+    ]
+    
+
+  out = os.path.join('out', build_type + '-' + target + '-' + machine)
+  gn = 'gn.exe' if 'windows' == host else 'gn'
+  print([os.path.join('bin', gn), 'gen', out, '--args=' + ' '.join(args)])
+  subprocess.check_call([os.path.join('bin', gn), 'gen', out, '--args=' + ' '.join(args)])
+  subprocess.check_call([os.path.join('..', tools_dir, ninja), '-C', out, 'skia', 'modules'])
+
+  return 0
+
+if __name__ == '__main__':
+  sys.exit(main())
